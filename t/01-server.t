@@ -74,9 +74,9 @@ while(sysread($sock, $buf, 8192, length($buf))) {
 }
 
 ok(!$hs->error, "completed handshake with server without error");
-is(length($buf), 0, "expected empty buffer after handshake");
 
 my $parser = new Protocol::WebSocket::Frame();
+$parser->append($buf);
 
 ok(_recv($sock => $parser), "got message without disconnect");
 my $bytes = $parser->next_bytes;
