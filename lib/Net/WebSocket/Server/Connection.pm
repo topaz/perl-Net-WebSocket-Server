@@ -257,7 +257,7 @@ L</EVENTS>.
 =item C<on(I<%events>)>
 
     $connection->on(
-        on_utf8 => sub { ... },
+        utf8 => sub { ... },
     ),
 
 Takes a list of C<< $event => $callback >> pairs; C<$event> names should not
