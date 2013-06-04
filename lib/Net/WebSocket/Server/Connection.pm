@@ -36,6 +36,7 @@ sub new {
   croak "$class construction requires '$_'" for grep { !defined $self->{$_} } qw(socket server);
 
   $self->{handshake} = new Protocol::WebSocket::Handshake::Server();
+  $self->{disconnecting} = 0;
 
   bless $self, $class;
 }
@@ -82,6 +83,8 @@ sub nodelay {
 
 sub disconnect {
   my ($self, $code, $reason) = @_;
+  return if $self->{disconnecting};
+  $self->{disconnecting} = 1;
 
   $self->_event('on_disconnect', $code, $reason);
 
@@ -89,7 +92,7 @@ sub disconnect {
   if (defined $code || defined $reason) {
     $code ||= 1000;
     $reason = '' unless defined $reason;
-    $data = pack("n", $code) . $reason;
+    $data = pack("na*", $code, $reason);
   }
   $self->send(close => $data) unless $self->{handshake};
 
@@ -165,7 +168,7 @@ sub recv {
     } elsif ($self->{parser}->is_pong) {
       $self->_event(on_pong => $bytes);
     } elsif ($self->{parser}->is_close) {
-      $self->disconnect(1000);
+      $self->disconnect(length $bytes ? unpack("na*",$bytes) : ());
       return;
     }
   }
@@ -333,6 +336,18 @@ L<Protocol::WebSocket::Handshake::Server|Protocol::WebSocket::Handshake::Server>
 object.  Use this event to inspect the handshake origin, cookies, etc for
 validity.  To abort the handshake process, call
 L<< $connection->disconnect()|/disconnect >>.
+
+For example:
+
+    if ($handshake->req->origin ne $expected_origin) {
+      $connection->disconnect();
+      return;
+    }
+
+    if ($handshake->req->subprotocol ne $expected_subprotocol) {
+      $connection->disconnect();
+      return;
+    }
 
 =item C<ready(I<$connection>)>
 
