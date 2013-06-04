@@ -47,8 +47,8 @@ unless ($child = fork) {
         },
         disconnect => sub {
           my ($conn, $code, $reason) = @_;
-          die "bad disconnect code" unless $code == 4242;
-          die "bad disconnect reason" unless $reason eq 'test server shutdown cleanly';
+          die "bad disconnect code" unless defined $code && $code == 4242;
+          die "bad disconnect reason" unless defined $reason && $reason eq 'test server shutdown cleanly';
           $serv->shutdown();
         },
       );
@@ -58,59 +58,86 @@ unless ($child = fork) {
   exit;
 }
 
-my $port = $listen->sockport;
-my $sock = IO::Socket::INET->new(PeerPort => $port, Proto => 'tcp', PeerAddr => 'localhost')
-        || IO::Socket::INET->new(PeerPort => $port, Proto => 'tcp', PeerAddr => '127.0.0.1')
-        or die "$! (maybe your system does not have a localhost at all, 'localhost' or 127.0.0.1)";
+my ($port, $sock);
 
-my $hs = Protocol::WebSocket::Handshake::Client->new(url => 'ws://localhost/testserver');
-$hs->req->subprotocol("test subprotocol");
-print $sock $hs->to_string;
+subtest "initialize client socket" => sub {
+  $port = $listen->sockport;
+  $sock = IO::Socket::INET->new(PeerPort => $port, Proto => 'tcp', PeerAddr => 'localhost')
+       || IO::Socket::INET->new(PeerPort => $port, Proto => 'tcp', PeerAddr => '127.0.0.1')
+       or die "$! (maybe your system does not have a localhost at all, 'localhost' or 127.0.0.1)";
+  ok(1);
+};
 
 my $buf = "";
-while(sysread($sock, $buf, 8192, length($buf))) {
-  $hs->parse($buf);
-  last if $hs->is_done;
-}
+my $hs;
 
-ok(!$hs->error, "completed handshake with server without error");
+subtest "handshake send" => sub {
+  $hs = Protocol::WebSocket::Handshake::Client->new(url => 'ws://localhost/testserver');
+  $hs->req->subprotocol("test subprotocol");
+  print $sock $hs->to_string;
+  ok(1);
+};
 
-my $parser = new Protocol::WebSocket::Frame();
-$parser->append($buf);
+subtest "handshake recv" => sub {
+  while(sysread($sock, $buf, 8192, length($buf))) {
+    $hs->parse($buf);
+    last if $hs->is_done;
+  }
 
-ok(_recv($sock => $parser), "got message without disconnect");
-my $bytes = $parser->next_bytes;
-ok($parser->is_binary, "expected binary message");
-is($bytes, "ready", "expected welcome 'ready' message");
+  ok(!$hs->error, "completed handshake with server without error");
+};
 
-foreach my $msg ("simple", "", ("a" x 32768), "unicode \u2603 snowman", "hiragana \u3072\u3089\u304c\u306a null \x00 ctrls \cA \cF \n \e del \x7f end") {
-  print $sock Protocol::WebSocket::Frame->new(type=>'text', buffer=>$msg)->to_bytes;
-  ok(_recv($sock => $parser), "got message without disconnect");
-  my $bytes = $parser->next_bytes;
-  ok($parser->is_text, "expected text message");
-  is($bytes, "utf8(" . length($msg) . ") = $msg");
-}
+my $parser;
 
-foreach my $msg ("simple", "", ("a" x 32768), "unicode \u2603 snowman", "hiragana \u3072\u3089\u304c\u306a null \x00 ctrls \cA \cF \n \e del \x7f end", join("", map{chr($_)} 0..255)) {
-  print $sock Protocol::WebSocket::Frame->new(type=>'binary', buffer=>$msg)->to_bytes;
-  ok(_recv($sock => $parser), "got message without disconnect");
-  my $bytes = $parser->next_bytes;
-  ok($parser->is_binary, "expected binary message");
-  is($bytes, "binary(" . length($msg) . ") = $msg");
-}
+subtest "initialize parser" => sub {
+  $parser = new Protocol::WebSocket::Frame();
+  $parser->append($buf);
+  ok(1);
+};
 
-foreach my $msg ("simple", "", ("a" x 32768), "unicode \u2603 snowman", "hiragana \u3072\u3089\u304c\u306a null \x00 ctrls \cA \cF \n \e del \x7f end", join("", map{chr($_)} 0..255)) {
-  print $sock Protocol::WebSocket::Frame->new(type=>'pong', buffer=>$msg)->to_bytes;
+subtest "ready message" => sub {
   ok(_recv($sock => $parser), "got message without disconnect");
   my $bytes = $parser->next_bytes;
   ok($parser->is_binary, "expected binary message");
-  is($bytes, "pong(" . length($msg) . ") = $msg");
-}
+  is($bytes, "ready", "expected welcome 'ready' message");
+};
 
-ok((kill 0 => $child), "child should still be alive");
-print $sock Protocol::WebSocket::Frame->new(type=>'close', buffer=>pack("n",4242)."test server shutdown cleanly")->to_bytes;
-waitpid $child, 0;
-ok(!(kill 0 => $child), "child should have shut down cleanly");
+subtest "echo utf8" => sub {
+  foreach my $msg ("simple", "", ("a" x 32768), "unicode \u2603 snowman", "hiragana \u3072\u3089\u304c\u306a null \x00 ctrls \cA \cF \n \e del \x7f end") {
+    print $sock Protocol::WebSocket::Frame->new(type=>'text', buffer=>$msg)->to_bytes;
+    ok(_recv($sock => $parser), "got message without disconnect");
+    my $bytes = $parser->next_bytes;
+    ok($parser->is_text, "expected text message");
+    is($bytes, "utf8(" . length($msg) . ") = $msg");
+  }
+};
+
+subtest "echo binary" => sub {
+  foreach my $msg ("simple", "", ("a" x 32768), "unicode \u2603 snowman", "hiragana \u3072\u3089\u304c\u306a null \x00 ctrls \cA \cF \n \e del \x7f end", join("", map{chr($_)} 0..255)) {
+    print $sock Protocol::WebSocket::Frame->new(type=>'binary', buffer=>$msg)->to_bytes;
+    ok(_recv($sock => $parser), "got message without disconnect");
+    my $bytes = $parser->next_bytes;
+    ok($parser->is_binary, "expected binary message");
+    is($bytes, "binary(" . length($msg) . ") = $msg");
+  }
+};
+
+subtest "echo pong" => sub {
+  foreach my $msg ("simple", "", ("a" x 32768), "unicode \u2603 snowman", "hiragana \u3072\u3089\u304c\u306a null \x00 ctrls \cA \cF \n \e del \x7f end", join("", map{chr($_)} 0..255)) {
+    print $sock Protocol::WebSocket::Frame->new(type=>'pong', buffer=>$msg)->to_bytes;
+    ok(_recv($sock => $parser), "got message without disconnect");
+    my $bytes = $parser->next_bytes;
+    ok($parser->is_binary, "expected binary message");
+    is($bytes, "pong(" . length($msg) . ") = $msg");
+  }
+};
+
+subtest "server shutdown" => sub {
+  ok((kill 0 => $child), "child should still be alive");
+  print $sock Protocol::WebSocket::Frame->new(type=>'close', buffer=>pack("n",4242)."test server shutdown cleanly")->to_bytes;
+  waitpid $child, 0;
+  ok(!(kill 0 => $child), "child should have shut down cleanly");
+};
 
 done_testing();
 cleanup();

@@ -10,7 +10,7 @@ use IO::Select;
 use Net::WebSocket::Server::Connection;
 use Time::HiRes qw(time);
 
-our $VERSION = '0.001001';
+our $VERSION = '0.001002';
 $VERSION = eval $VERSION;
 
 sub new {
