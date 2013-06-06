@@ -96,8 +96,7 @@ subtest "initialize parser" => sub {
 };
 
 subtest "ready message" => sub {
-  ok(_recv($sock => $parser), "got message without disconnect");
-  my $bytes = $parser->next_bytes;
+  my $bytes = _recv($sock => $parser);
   ok($parser->is_binary, "expected binary message");
   is($bytes, "ready", "expected welcome 'ready' message");
 };
@@ -105,8 +104,7 @@ subtest "ready message" => sub {
 subtest "echo utf8" => sub {
   foreach my $msg ("simple", "", ("a" x 32768), "unicode \u2603 snowman", "hiragana \u3072\u3089\u304c\u306a null \x00 ctrls \cA \cF \n \e del \x7f end") {
     print $sock Protocol::WebSocket::Frame->new(type=>'text', buffer=>$msg)->to_bytes;
-    ok(_recv($sock => $parser), "got message without disconnect");
-    my $bytes = $parser->next_bytes;
+    my $bytes = _recv($sock => $parser);
     ok($parser->is_text, "expected text message");
     is($bytes, "utf8(" . length($msg) . ") = $msg");
   }
@@ -115,8 +113,7 @@ subtest "echo utf8" => sub {
 subtest "echo binary" => sub {
   foreach my $msg ("simple", "", ("a" x 32768), "unicode \u2603 snowman", "hiragana \u3072\u3089\u304c\u306a null \x00 ctrls \cA \cF \n \e del \x7f end", join("", map{chr($_)} 0..255)) {
     print $sock Protocol::WebSocket::Frame->new(type=>'binary', buffer=>$msg)->to_bytes;
-    ok(_recv($sock => $parser), "got message without disconnect");
-    my $bytes = $parser->next_bytes;
+    my $bytes = _recv($sock => $parser);
     ok($parser->is_binary, "expected binary message");
     is($bytes, "binary(" . length($msg) . ") = $msg");
   }
@@ -125,8 +122,7 @@ subtest "echo binary" => sub {
 subtest "echo pong" => sub {
   foreach my $msg ("simple", "", ("a" x 32768), "unicode \u2603 snowman", "hiragana \u3072\u3089\u304c\u306a null \x00 ctrls \cA \cF \n \e del \x7f end", join("", map{chr($_)} 0..255)) {
     print $sock Protocol::WebSocket::Frame->new(type=>'pong', buffer=>$msg)->to_bytes;
-    ok(_recv($sock => $parser), "got message without disconnect");
-    my $bytes = $parser->next_bytes;
+    my $bytes = _recv($sock => $parser);
     ok($parser->is_binary, "expected binary message");
     is($bytes, "pong(" . length($msg) . ") = $msg");
   }
@@ -145,14 +141,11 @@ cleanup();
 sub _recv {
   my ($sock, $parser) = @_;
 
-  my ($len, $data) = (0, "");
-  if (!($len = sysread($sock, $data, 8192))) {
-    return undef;
+  my $message;
+  while (!defined($message = $parser->next_bytes)) {
+    my $data;
+    die "expected read but socket seems to be disconnected" unless defined sysread($sock, $data, 8192);
+    $parser->append($data);
   }
-
-  # read remaining data
-  $len = sysread($sock, $data, 8192, length($data)) while $len >= 8192;
-
-  $parser->append($data);
-  return 1;
+  return $message;
 }
