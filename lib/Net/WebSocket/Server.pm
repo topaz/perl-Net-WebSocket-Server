@@ -10,7 +10,7 @@ use IO::Select;
 use Net::WebSocket::Server::Connection;
 use Time::HiRes qw(time);
 
-our $VERSION = '0.001003';
+our $VERSION = '0.002000';
 $VERSION = eval $VERSION;
 
 sub new {
@@ -68,6 +68,7 @@ sub start {
     foreach my $fh (@ready) {
       if ($fh == $self->{listen}) {
         my $sock = $self->{listen}->accept;
+        next unless $sock;
         my $conn = new Net::WebSocket::Server::Connection(socket => $sock, server => $self);
         $self->{conns}{$sock} = {conn=>$conn, lastrecv=>time};
         $self->{select}->add($sock);
@@ -134,7 +135,7 @@ Simple echo server for C<utf8> messages.
         },
     )->start;
 
-Broadcast-echo server for C<utf8> and C<binary> messages.
+Broadcast-echo server for C<utf8> and C<binary> messages with origin testing.
 
     use Net::WebSocket::Server;
 
@@ -161,6 +162,8 @@ Broadcast-echo server for C<utf8> and C<binary> messages.
         },
     )->start;
 
+See L</listen> for an example of setting up an SSL (C<wss://...>) server.
+
 =head1 DESCRIPTION
 
 This module implements the details of a WebSocket server and invokes the
@@ -178,7 +181,7 @@ objects.
     Net::WebSocket::Server->new(
         listen => 8080,
         on_connect => sub { ... },
-    ),
+    )
 
 Creates a new C<Net::WebSocket::Server> object with the given configuration.
 Takes the following parameters:
@@ -189,6 +192,23 @@ Takes the following parameters:
 
 If not a reference, the TCP port on which to listen.  If a reference, a
 preconfigured L<IO::Socket::INET|IO::Socket::INET> TCP server to use.  Default C<80>.
+
+To create an SSL WebSocket server (such that you can connect to it via a
+C<wss://...> URL), pass an object which acts like L<IO::Socket::INET|IO::Socket::INET>
+and speaks SSL, such as L<IO::Socket::SSL|IO::Socket::SSL>.  For example:
+
+    my $ssl_server = IO::Socket::SSL->new(
+      Listen        => 5,
+      LocalPort     => 8080,
+      Proto         => 'tcp',
+      SSL_cert_file => '/path/to/server.crt',
+      SSL_key_file  => '/path/to/server.key',
+    ) or die "failed to listen: $!";
+
+    Net::WebSocket::Server->new(
+        listen => $ssl_server,
+        on_connect => sub { ... },
+    )
 
 =item C<silence_max>
 
@@ -214,7 +234,7 @@ See L</EVENTS>.
 
     $server->on(
         connect => sub { ... },
-    ),
+    )
 
 Takes a list of C<< $event => $callback >> pairs; C<$event> names should not
 include an C<on_> prefix.  Typically, events are configured once via the
