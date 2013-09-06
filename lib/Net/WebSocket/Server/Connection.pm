@@ -7,7 +7,7 @@ use warnings FATAL => 'all';
 use Carp;
 use Protocol::WebSocket::Handshake::Server;
 use Protocol::WebSocket::Frame;
-use Socket qw(IPPROTO_TCP TCP_NODELAY getnameinfo NI_NUMERICHOST NI_NUMERICSERV);
+use Socket qw(IPPROTO_TCP TCP_NODELAY);
 use Encode;
 
 sub new {
@@ -61,9 +61,7 @@ sub socket { $_[0]->{socket} }
 
 sub ip {
   my $sock = $_[0]->{socket};
-  return "0.0.0.0" unless $sock && $sock->connected;
-  my (undef, $host, $port) = getnameinfo(getpeername($sock), NI_NUMERICHOST | NI_NUMERICSERV);
-  return $host;
+  return $sock && $sock->connected ? $sock->peerhost : "0.0.0.0";
 }
 
 sub port {
