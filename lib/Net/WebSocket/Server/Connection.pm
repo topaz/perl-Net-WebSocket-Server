@@ -19,6 +19,7 @@ sub new {
     socket        => undef,
     server        => undef,
     nodelay       => 1,
+    max_send_size => eval { Protocol::WebSocket::Frame->new->{max_payload_size} } || 65536,
     on_handshake  => sub{},
     on_ready      => sub{},
     on_disconnect => sub{},
@@ -78,6 +79,12 @@ sub nodelay {
   return $self->{nodelay};
 }
 
+sub max_send_size {
+  my $self = shift;
+  $self->{max_send_size} = $_[0] if @_;
+  return $self->{max_send_size};
+}
+
 
 ### methods
 
@@ -115,7 +122,7 @@ sub send {
     return 0;
   }
 
-  my $frame = new Protocol::WebSocket::Frame(type => $type);
+  my $frame = new Protocol::WebSocket::Frame(type => $type, max_payload_size => $self->{max_send_size});
   $frame->append($data) if defined $data;
 
   my $bytes = eval { $frame->to_bytes };
@@ -241,6 +248,15 @@ set, this cannot be changed.  Required.
 A boolean value indicating whether C<TCP_NODELAY> should be set on the socket
 after the handshake is complete.  Default C<1>.  See L<nodelay()|/nodelay>.
 
+=item C<max_send_size>
+
+The maximum size of an outgoing payload.  Default
+C<< Protocol::WebSocket::Frame->new->{max_payload_size} >>.
+
+When building an outgoing message, this value is passed to new instances of
+L<Protocol::WebSocket::Frame|Protocol::WebSocket::Frame> as the
+C<max_payload_size> parameter.
+
 =item C<on_C<$event>>
 
 The callback to invoke when the given C<$event> occurs, such as C<ready>.  See
@@ -293,6 +309,15 @@ delayed for bundling into fewer, larger packets, but should instead be sent
 immediately.  While enabling this setting can incur additional strain on the
 network, it tends to be the desired behavior for WebSocket servers, so it is
 enabled by default.
+
+=item C<max_send_size([I<$size>])>
+
+Sets the maximum allowed size of an outgoing payload.  Returns the current or
+newly-set value.
+
+When building an outgoing message, this value is passed to new instances of
+L<Protocol::WebSocket::Frame|Protocol::WebSocket::Frame> as the
+C<max_payload_size> parameter.
 
 =item C<disconnect(I<$code>, I<$reason>)>
 
