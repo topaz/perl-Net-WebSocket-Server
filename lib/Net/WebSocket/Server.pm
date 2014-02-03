@@ -10,7 +10,7 @@ use IO::Select;
 use Net::WebSocket::Server::Connection;
 use Time::HiRes qw(time);
 
-our $VERSION = '0.002002';
+our $VERSION = '0.002003';
 $VERSION = eval $VERSION;
 
 sub new {
@@ -56,7 +56,7 @@ sub start {
     LocalPort => $self->{listen},
     Proto     => 'tcp',
     ReuseAddr => 1,
-  ) or croak "failed to listen on port $self->{listen}: $!" unless ref $self->{listen};
+  ) || croak "failed to listen on port $self->{listen}: $!" unless ref $self->{listen};
 
   $self->{select} = IO::Select->new($self->{listen});
   $self->{conns} = {};
