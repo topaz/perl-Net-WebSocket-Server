@@ -246,7 +246,7 @@ set, this cannot be changed.  Required.
 =item C<nodelay>
 
 A boolean value indicating whether C<TCP_NODELAY> should be set on the socket
-after the handshake is complete.  Default C<1>.  See L<nodelay()|/nodelay>.
+after the handshake is complete.  Default C<1>.  See L<nodelay()|/nodelay([$enable])>.
 
 =item C<max_send_size>
 

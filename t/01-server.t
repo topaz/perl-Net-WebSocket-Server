@@ -15,12 +15,43 @@ alarm(10);
 
 my $listen = IO::Socket::INET->new(Listen => 2, Proto => 'tcp', Timeout => 5) or die "$!";
 
+my ($read_test_out, $read_test_in, $write_test_out, $write_test_in);
+pipe $read_test_out, $read_test_in;
+pipe $write_test_out, $write_test_in;
+$read_test_in->autoflush(1);
+$write_test_in->autoflush(1);
+$write_test_in->blocking(0);
+#fill write pipe so it's not ready for writing yet
+my $write_pipe_size = 0;
+while (1) {
+  my $w = syswrite($write_test_in, "a" x 1024);
+  $write_pipe_size += $w if defined $w;
+  last if !defined $w || $w < 1024;
+}
+$write_test_in->blocking(1);
+
 unless ($child = fork) {
   delete $SIG{ALRM};
   require Net::WebSocket::Server;
 
   Net::WebSocket::Server->new(
     listen => $listen,
+    watch_readable => [
+      $read_test_out => sub {
+        my ($serv, $fh) = @_;
+        my $data;
+        sysread($fh, $data, 1);
+        $_->send_binary("read_test_out(".length($data).") = $data") for $serv->connections;
+        $serv->unwatch_readable($fh);
+      },
+    ],
+    watch_writable => [
+      $write_test_in => sub {
+        my ($serv, $fh) = @_;
+        syswrite($fh, "W");
+        $serv->unwatch_writable($fh);
+      },
+    ],
     on_connect => sub {
       my ($serv, $conn) = @_;
       $conn->on(
@@ -126,6 +157,20 @@ subtest "echo pong" => sub {
     ok($parser->is_binary, "expected binary message");
     is($bytes, "pong(" . length($msg) . ") = $msg");
   }
+};
+
+subtest "watch_readable" => sub {
+  syswrite($read_test_in, "R");
+  my $bytes = _recv($sock => $parser);
+  ok($parser->is_binary, "expected binary message");
+  is($bytes, "read_test_out(1) = R");
+};
+
+subtest "watch_writable" => sub {
+  my ($scratch, $value);
+  sysread($write_test_out, $scratch, $write_pipe_size);
+  sysread($write_test_out, $value, 1);
+  is($value, "W");
 };
 
 subtest "server shutdown" => sub {

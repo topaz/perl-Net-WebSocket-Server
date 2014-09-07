@@ -20,24 +20,96 @@ sub new {
   my %params = @_;
 
   my $self = {
-    listen      => 80,
-    silence_max => 20,
-    tick_period => 0,
-    on_connect  => sub{},
-    on_tick     => sub{},
-    on_shutdown => sub{},
+    listen         => 80,
+    silence_max    => 20,
+    tick_period    => 0,
+    watch_readable => [],
+    watch_writable => [],
+    on_connect     => sub{},
+    on_tick        => sub{},
+    on_shutdown    => sub{},
   };
 
   while (my ($key, $value) = each %params ) {
     croak "Invalid $class parameter '$key'" unless exists $self->{$key};
-    croak "$class parameter '$key' expects a coderef" if ref $self->{$key} eq 'CODE' && ref $value ne 'CODE';
+    croak "$class parameter '$key' expected type is ".ref($self->{$key}) if ref $self->{$key} && ref $value ne ref $self->{$key};
     $self->{$key} = $value;
   }
+
+  bless $self, $class;
 
   # send a ping every silence_max by checking whether data was received in the last silence_max/2
   $self->{silence_checkinterval} = $self->{silence_max} / 2;
 
-  bless $self, $class;
+  foreach my $watchtype (qw(readable writable)) {
+    $self->{"select_$watchtype"} = IO::Select->new();
+    my $key = "watch_$watchtype";
+    croak "$class parameter '$key' expects an arrayref containing an even number of elements" unless @{$self->{$key}} % 2 == 0;
+    my @watch = @{$self->{$key}};
+    $self->{$key} = {};
+    $self->_watch($watchtype, @watch);
+  }
+
+  return $self;
+}
+
+sub watch_readable {
+  my $self = shift;
+  croak "watch_readable expects an even number of arguments" unless @_ % 2 == 0;
+  $self->_watch(readable => @_);
+}
+
+sub watched_readable {
+  my $self = shift;
+  return $self->{watch_readable}{$_[0]}{cb} if @_;
+  return map {$_->{fh}, $_->{cb}} values %{$self->{watch_readable}};
+}
+
+sub watch_writable {
+  my $self = shift;
+  croak "watch_writable expects an even number of arguments" unless @_ % 2 == 0;
+  $self->_watch(writable => @_);
+}
+
+sub watched_writable {
+  my $self = shift;
+  return $self->{watch_writable}{$_[0]}{cb} if @_;
+  return map {$_->{fh}, $_->{cb}} values %{$self->{watch_writable}};
+}
+
+sub _watch {
+  my $self = shift;
+  my $watchtype = shift;
+  croak "watch_$watchtype expects an even number of arguments after the type" unless @_ % 2 == 0;
+  for (my $i = 0; $i < @_; $i+=2) {
+    my ($fh, $cb) = ($_[$i], $_[$i+1]);
+    croak "watch_$watchtype expects the second value of each pair to be a coderef, but element $i was not" unless ref $cb eq 'CODE';
+    if ($self->{"watch_$watchtype"}{$fh}) {
+      carp "watch_$watchtype was given a filehandle at index $i which is already being watched; ignoring!";
+      next;
+    }
+    $self->{"select_$watchtype"}->add($fh);
+    $self->{"watch_$watchtype"}{$fh} = {fh=>$fh, cb=>$cb};
+  }
+}
+
+sub unwatch_readable {
+  my $self = shift;
+  $self->_unwatch(readable => @_);
+}
+
+sub unwatch_writable {
+  my $self = shift;
+  $self->_unwatch(writable => @_);
+}
+
+sub _unwatch {
+  my $self = shift;
+  my $watchtype = shift;
+  foreach my $fh (@_) {
+    $self->{"select_$watchtype"}->remove($fh);
+    delete $self->{"watch_$watchtype"}{$fh};
+  }
 }
 
 sub on {
@@ -62,28 +134,44 @@ sub start {
     ReuseAddr => 1,
   ) || croak "failed to listen on port $self->{listen}: $!" unless ref $self->{listen};
 
-  $self->{select} = IO::Select->new($self->{listen});
+  $self->{select_readable}->add($self->{listen});
+
   $self->{conns} = {};
   my $silence_nextcheck = $self->{silence_max} ? (time + $self->{silence_checkinterval}) : 0;
   my $tick_next = $self->{tick_period} ? (time + $self->{tick_period}) : 0;
 
-  while ($self->{select}->count) {
+  while (%{$self->{conns}} || $self->{listen}->opened) {
     my $silence_checktimeout = $self->{silence_max} ? ($silence_nextcheck - time) : undef;
     my $tick_timeout = $self->{tick_period} ? ($tick_next - time) : undef;
     my $timeout = min(grep {defined} ($silence_checktimeout, $tick_timeout));
-    my @ready = $self->{select}->can_read($timeout);
-    foreach my $fh (@ready) {
+
+    my ($ready_read, $ready_write, undef) = IO::Select->select($self->{select_readable}, $self->{select_writable}, undef, $timeout);
+    foreach my $fh ($ready_read ? @$ready_read : ()) {
       if ($fh == $self->{listen}) {
         my $sock = $self->{listen}->accept;
         next unless $sock;
         my $conn = new Net::WebSocket::Server::Connection(socket => $sock, server => $self);
         $self->{conns}{$sock} = {conn=>$conn, lastrecv=>time};
-        $self->{select}->add($sock);
+        $self->{select_readable}->add($sock);
         $self->{on_connect}($self, $conn);
-      } else {
+      } elsif ($self->{watch_readable}{$fh}) {
+        $self->{watch_readable}{$fh}{cb}($self, $fh);
+      } elsif ($self->{conns}{$fh}) {
         my $connmeta = $self->{conns}{$fh};
         $connmeta->{lastrecv} = time;
         $connmeta->{conn}->recv();
+      } else {
+        warn "filehandle $fh became readable, but no handler took responsibility for it; removing it";
+        $self->{select_readable}->remove($fh);
+      }
+    }
+
+    foreach my $fh ($ready_write ? @$ready_write : ()) {
+      if ($self->{watch_writable}{$fh}) {
+        $self->{watch_writable}{$fh}{cb}($self, $fh);
+      } else {
+        warn "filehandle $fh became writable, but no handler took responsibility for it; removing it";
+        $self->{select_writable}->remove($fh);
       }
     }
 
@@ -109,14 +197,14 @@ sub connections { map {$_->{conn}} values %{$_[0]{conns}} }
 sub shutdown {
   my ($self) = @_;
   $self->{on_shutdown}($self);
-  $self->{select}->remove($self->{listen});
+  $self->{select_readable}->remove($self->{listen});
   $self->{listen}->close();
   $_->disconnect(1001) for $self->connections;
 }
 
 sub disconnect {
   my ($self, $fh) = @_;
-  $self->{select}->remove($fh);
+  $self->{select_readable}->remove($fh);
   $fh->close();
   delete $self->{conns}{$fh};
 }
@@ -234,7 +322,7 @@ and speaks SSL, such as L<IO::Socket::SSL|IO::Socket::SSL>.  For example:
     Net::WebSocket::Server->new(
         listen => $ssl_server,
         on_connect => sub { ... },
-    )
+    )->start;
 
 =item C<silence_max>
 
@@ -253,6 +341,26 @@ Default C<0>.
 The callback to invoke when the given C<$event> occurs, such as C<on_connect>.
 See L</EVENTS>.
 
+=item C<watch_readable>
+
+=item C<watch_writable>
+
+Each of these takes an I<arrayref> of C<< $filehandle => $callback >> pairs to be
+passed to the corresponding method.  Default C<[]>.  See
+L<watch_readable()|/watch_readable(@pairs)> and
+L<watch_writable()|/watch_writable(@pairs)>.  For example:
+
+    Net::WebSocket::Server->new(
+        # ...other relevant arguments...
+        watch_readable => [
+            \*STDIN => \&on_stdin,
+        ],
+        watch_writable => [
+            $log1_fh => sub { ... },
+            $log2_fh => sub { ... },
+        ],
+    )->start;
+
 =back
 
 =back
@@ -265,7 +373,7 @@ See L</EVENTS>.
 
     $server->on(
         connect => sub { ... },
-    )
+    );
 
 Takes a list of C<< $event => $callback >> pairs; C<$event> names should not
 include an C<on_> prefix.  Typically, events are configured once via the
@@ -294,6 +402,44 @@ function anyway.
 
 Closes the listening socket and cleanly disconnects all clients, causing the
 L<start()|/start> method to return.
+
+=item C<watch_readable(I<@pairs>)>
+
+    $server->watch_readable(
+      \*STDIN => \&on_stdin,
+    );
+
+Takes a list of C<< $filehandle => $callback >> pairs.  The given filehandles
+will be monitored for readability; when readable, the given callback will be
+invoked.  Arguments passed to the callback are the server itself and the
+filehandle which became readable.
+
+=item C<watch_writable(I<@pairs>)>
+
+    $server->watch_writable(
+      $log1_fh => sub { ... },
+      $log2_fh => sub { ... },
+    );
+
+Takes a list of C<< $filehandle => $callback >> pairs.  The given filehandles
+will be monitored for writability; when writable, the given callback will be
+invoked.  Arguments passed to the callback are the server itself and the
+filehandle which became writable.
+
+=item C<watched_readable([I<$filehandle>])>
+
+=item C<watched_writable([I<$filehandle>])>
+
+These methods return a list of C<< $filehandle => $callback >> pairs that are
+curently being watched for readability / writability.  If a filehandle is
+given, its callback is returned, or C<undef> if it isn't being watched.
+
+=item C<unwatch_readable(I<@filehandles>)
+
+=item C<unwatch_writable(I<@filehandles>)
+
+These methods cause the given filehandles to no longer be watched for
+readability / writability.
 
 =back
 
