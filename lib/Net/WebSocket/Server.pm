@@ -11,7 +11,7 @@ use Net::WebSocket::Server::Connection;
 use Time::HiRes qw(time);
 use List::Util qw(min);
 
-our $VERSION = '0.002003';
+our $VERSION = '0.003000';
 $VERSION = eval $VERSION;
 
 sub new {
@@ -434,9 +434,9 @@ These methods return a list of C<< $filehandle => $callback >> pairs that are
 curently being watched for readability / writability.  If a filehandle is
 given, its callback is returned, or C<undef> if it isn't being watched.
 
-=item C<unwatch_readable(I<@filehandles>)
+=item C<unwatch_readable(I<@filehandles>)>
 
-=item C<unwatch_writable(I<@filehandles>)
+=item C<unwatch_writable(I<@filehandles>)>
 
 These methods cause the given filehandles to no longer be watched for
 readability / writability.
