@@ -9,6 +9,7 @@ use IO::Socket::INET;
 use IO::Select;
 use Net::WebSocket::Server::Connection;
 use Time::HiRes qw(time);
+use List::Util qw(min);
 
 our $VERSION = '0.002003';
 $VERSION = eval $VERSION;
@@ -21,7 +22,10 @@ sub new {
   my $self = {
     listen      => 80,
     silence_max => 20,
+    tick_period => 0,
     on_connect  => sub{},
+    on_tick     => sub{},
+    on_shutdown => sub{},
   };
 
   while (my ($key, $value) = each %params ) {
@@ -60,11 +64,14 @@ sub start {
 
   $self->{select} = IO::Select->new($self->{listen});
   $self->{conns} = {};
-  $self->{silence_nextcheck} = $self->{silence_max} ? (time + $self->{silence_checkinterval}) : 0;
+  my $silence_nextcheck = $self->{silence_max} ? (time + $self->{silence_checkinterval}) : 0;
+  my $tick_next = $self->{tick_period} ? (time + $self->{tick_period}) : 0;
 
   while ($self->{select}->count) {
-    my $silence_checktimeout = $self->{silence_max} ? ($self->{silence_nextcheck} - time) : undef;
-    my @ready = $self->{select}->can_read($silence_checktimeout);
+    my $silence_checktimeout = $self->{silence_max} ? ($silence_nextcheck - time) : undef;
+    my $tick_timeout = $self->{tick_period} ? ($tick_next - time) : undef;
+    my $timeout = min(grep {defined} ($silence_checktimeout, $tick_timeout));
+    my @ready = $self->{select}->can_read($timeout);
     foreach my $fh (@ready) {
       if ($fh == $self->{listen}) {
         my $sock = $self->{listen}->accept;
@@ -82,12 +89,17 @@ sub start {
 
     if ($self->{silence_max}) {
       my $now = time;
-      if ($self->{silence_nextcheck} < $now) {
-        my $lastcheck = $self->{silence_nextcheck} - $self->{silence_checkinterval};
+      if ($silence_nextcheck < $now) {
+        my $lastcheck = $silence_nextcheck - $self->{silence_checkinterval};
         $_->{conn}->send('ping') for grep { $_->{lastrecv} < $lastcheck } values %{$self->{conns}};
 
-        $self->{silence_nextcheck} = $now + $self->{silence_checkinterval};
+        $silence_nextcheck = $now + $self->{silence_checkinterval};
       }
+    }
+
+    if ($self->{tick_period} && $tick_next < time) {
+      $self->{on_tick}($self);
+      $tick_next += $self->{tick_period};
     }
   }
 }
@@ -96,6 +108,7 @@ sub connections { map {$_->{conn}} values %{$_[0]{conns}} }
 
 sub shutdown {
   my ($self) = @_;
+  $self->{on_shutdown}($self);
   $self->{select}->remove($self->{listen});
   $self->{listen}->close();
   $_->disconnect(1001) for $self->connections;
@@ -132,6 +145,19 @@ Simple echo server for C<utf8> messages.
                     $conn->send_utf8($msg);
                 },
             );
+        },
+    )->start;
+
+Server that sends the current time to all clients every second.
+
+    use Net::WebSocket::Server;
+
+    my $ws = Net::WebSocket::Server->new(
+        listen => 8080,
+        tick_period => 1,
+        on_tick => sub {
+            my ($serv) = @_;
+            $_->send_utf8(time) for $serv->connections;
         },
     )->start;
 
@@ -217,6 +243,11 @@ socket.  Every C<silence_max/2> seconds, each connection is checked for
 whether data was received since the last check; if not, a WebSocket ping
 message is sent.  Set to C<0> to disable.  Default C<20>.
 
+=item C<tick_period>
+
+The amount of time in seconds between C<tick> events.  Set to C<0> to disable.
+Default C<0>.
+
 =item C<on_C<$event>>
 
 The callback to invoke when the given C<$event> occurs, such as C<on_connect>.
@@ -281,6 +312,20 @@ newly-constructed
 L<Net::WebSocket::Server::Connection|Net::WebSocket::Server::Connection>
 object.  Arguments passed to the callback are the server accepting the
 connection and the new connection object itself.
+
+=item C<tick(I<$server>)>
+
+Invoked every L<tick_period|/tick_period> seconds, or never if
+L<tick_period|/tick_period> is C<0>.  Useful to perform actions that aren't in
+response to a message from a client.  Arguments passed to the callback are only
+the server itself.
+
+=item C<shutdown(I<$server>)>
+
+Invoked immediately before the server shuts down due to the L<shutdown()>
+method being invoked.  Any client connections will still be available until
+the event handler returns.  Arguments passed to the callback are only the
+server that is being shut down.
 
 =back
 
