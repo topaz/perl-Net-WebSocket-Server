@@ -15,9 +15,25 @@ alarm(10);
 
 my $listen = IO::Socket::INET->new(Listen => 2, Proto => 'tcp', Timeout => 5) or die "$!";
 
+sub accursed_win32_pipe_simulation {
+  my $listen = IO::Socket::INET->new(Listen => 2, Proto => 'tcp', Timeout => 5, Blocking => 0) or die "$!";
+  my $port = $listen->sockport;
+  my $a = IO::Socket::INET->new(PeerPort => $port, Proto => 'tcp', PeerAddr => '127.0.0.1', Blocking => 0)
+          or die "failed to connect to 127.0.0.1: $!";
+  my $b = $listen->accept;
+  $a->blocking(1);
+  $b->blocking(1);
+  return ($a, $b);
+}
+
 my ($read_test_out, $read_test_in, $write_test_out, $write_test_in);
-pipe $read_test_out, $read_test_in;
-pipe $write_test_out, $write_test_in;
+if ($^O eq 'MSWin32') {
+  ($read_test_out, $read_test_in) = accursed_win32_pipe_simulation();
+  ($write_test_out, $write_test_in) = accursed_win32_pipe_simulation();
+} else {
+  pipe $read_test_out, $read_test_in;
+  pipe $write_test_out, $write_test_in;
+}
 $read_test_in->autoflush(1);
 $write_test_in->autoflush(1);
 $write_test_in->blocking(0);
@@ -93,9 +109,8 @@ my ($port, $sock);
 
 subtest "initialize client socket" => sub {
   $port = $listen->sockport;
-  $sock = IO::Socket::INET->new(PeerPort => $port, Proto => 'tcp', PeerAddr => 'localhost')
-       || IO::Socket::INET->new(PeerPort => $port, Proto => 'tcp', PeerAddr => '127.0.0.1')
-       or die "$! (maybe your system does not have a localhost at all, 'localhost' or 127.0.0.1)";
+  $sock = IO::Socket::INET->new(PeerPort => $port, Proto => 'tcp', PeerAddr => '127.0.0.1')
+          or die "failed to connect to 127.0.0.1: $!";
   ok(1);
 };
 
@@ -167,8 +182,12 @@ subtest "watch_readable" => sub {
 };
 
 subtest "watch_writable" => sub {
-  my ($scratch, $value);
-  sysread($write_test_out, $scratch, $write_pipe_size);
+  my ($bytes_read, $scratch, $value);
+  while ($write_pipe_size) {
+    $bytes_read = sysread($write_test_out, $scratch, $write_pipe_size > 8192 ? 8192 : $write_pipe_size);
+    die "watch_writable sysread: $!" unless defined $bytes_read;
+    $write_pipe_size -= $bytes_read;
+  }
   sysread($write_test_out, $value, 1);
   is($value, "W");
 };

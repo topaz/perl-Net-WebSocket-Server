@@ -11,7 +11,7 @@ use Net::WebSocket::Server::Connection;
 use Time::HiRes qw(time);
 use List::Util qw(min);
 
-our $VERSION = '0.003000';
+our $VERSION = '0.003001';
 $VERSION = eval $VERSION;
 
 sub new {
