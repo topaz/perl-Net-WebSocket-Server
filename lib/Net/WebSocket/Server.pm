@@ -11,8 +11,10 @@ use Net::WebSocket::Server::Connection;
 use Time::HiRes qw(time);
 use List::Util qw(min);
 
-our $VERSION = '0.003001';
+our $VERSION = '0.003002';
 $VERSION = eval $VERSION;
+
+$SIG{PIPE} = 'IGNORE';
 
 sub new {
   my $class = shift;
@@ -126,13 +128,20 @@ sub on {
 sub start {
   my $self = shift;
 
-  # if we merely got a port, set up a reasonable default tcp server
-  $self->{listen} = IO::Socket::INET->new(
-    Listen    => 5,
-    LocalPort => $self->{listen},
-    Proto     => 'tcp',
-    ReuseAddr => 1,
-  ) || croak "failed to listen on port $self->{listen}: $!" unless ref $self->{listen};
+  if (ref $self->{listen}) {
+    # if we got a server, make sure it's valid by clearing errors and checking errors anyway; if there's still an error, it's closed
+    $self->{listen}->clearerr;
+    croak "failed to start websocket server; the TCP server provided via 'listen' is invalid. (is the listening socket is closed? are you trying to reuse a server that has already shut down?)"
+       if $self->{listen}->error;
+  } else {
+    # if we merely got a port, set up a reasonable default tcp server
+    $self->{listen} = IO::Socket::INET->new(
+      Listen    => 5,
+      LocalPort => $self->{listen},
+      Proto     => 'tcp',
+      ReuseAddr => 1,
+    ) || croak "failed to listen on port $self->{listen}: $!";
+  }
 
   $self->{select_readable}->add($self->{listen});
 
@@ -474,6 +483,10 @@ the event handler returns.  Arguments passed to the callback are only the
 server that is being shut down.
 
 =back
+
+=head1 CAVEATS
+
+When loaded (via C<use>, at C<BEGIN>-time), this module installs a C<SIGPIPE> handler of C<'IGNORE'>.  Write failures are handled situationally rather than in a global C<SIGPIPE> handler, but this still must be done to prevent the signal from killing the server process.  If you require your own C<SIGPIPE> handler, assign to C<$SIG{PIPE}> after this module is loaded.
 
 =head1 AUTHOR
 
