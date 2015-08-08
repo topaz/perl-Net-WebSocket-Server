@@ -11,7 +11,7 @@ use Net::WebSocket::Server::Connection;
 use Time::HiRes qw(time);
 use List::Util qw(min);
 
-our $VERSION = '0.003002';
+our $VERSION = '0.003003';
 $VERSION = eval $VERSION;
 
 $SIG{PIPE} = 'IGNORE';

@@ -27,7 +27,7 @@ sub accursed_win32_pipe_simulation {
 }
 
 my ($read_test_out, $read_test_in, $write_test_out, $write_test_in);
-if ($^O eq 'MSWin32') {
+if ($^O eq 'MSWin32' || $^O eq 'cygwin') {
   ($read_test_out, $read_test_in) = accursed_win32_pipe_simulation();
   ($write_test_out, $write_test_in) = accursed_win32_pipe_simulation();
 } else {

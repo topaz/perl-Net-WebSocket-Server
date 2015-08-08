@@ -1,5 +1,11 @@
 Revision history for Net-WebSocket-Server
 
+0.3.3   2015-08-08
+        Minor adjustments to test to fix Cygwin timeout issue.
+
+0.3.2   2015-06-05
+        Bugfixes for SIGPIPE and socket reuse.
+
 0.3.1   2014-09-16
         Minor adjustments to tests to fix Win32 timeout issue.
 
