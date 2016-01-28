@@ -11,7 +11,7 @@ use Net::WebSocket::Server::Connection;
 use Time::HiRes qw(time);
 use List::Util qw(min);
 
-our $VERSION = '0.003003';
+our $VERSION = '0.003004';
 $VERSION = eval $VERSION;
 
 $SIG{PIPE} = 'IGNORE';
@@ -188,7 +188,7 @@ sub start {
       my $now = time;
       if ($silence_nextcheck < $now) {
         my $lastcheck = $silence_nextcheck - $self->{silence_checkinterval};
-        $_->{conn}->send('ping') for grep { $_->{lastrecv} < $lastcheck } values %{$self->{conns}};
+        $_->{conn}->send('ping') for grep { $_->{conn}->is_ready && $_->{lastrecv} < $lastcheck } values %{$self->{conns}};
 
         $silence_nextcheck = $now + $self->{silence_checkinterval};
       }
@@ -201,7 +201,7 @@ sub start {
   }
 }
 
-sub connections { map {$_->{conn}} values %{$_[0]{conns}} }
+sub connections { grep {$_->is_ready} map {$_->{conn}} values %{$_[0]{conns}} }
 
 sub shutdown {
   my ($self) = @_;

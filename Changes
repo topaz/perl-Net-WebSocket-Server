@@ -1,5 +1,9 @@
 Revision history for Net-WebSocket-Server
 
+0.3.4   2016-01-27
+        Ignore mid-handshake connections for pings and ->connections() list;
+        provide $conn->is_ready() interface to accomodate this.
+
 0.3.3   2015-08-08
         Minor adjustments to test to fix Cygwin timeout issue.
 

@@ -60,6 +60,8 @@ sub server { $_[0]->{server} }
 
 sub socket { $_[0]->{socket} }
 
+sub is_ready { !$_[0]->{handshake} }
+
 sub ip {
   my $sock = $_[0]->{socket};
   return $sock && $sock->connected ? $sock->peerhost : "0.0.0.0";
@@ -286,6 +288,11 @@ Returns the associated L<Net::WebSocket::Server|Net::WebSocket::Server> object.
 =item C<socket()>
 
 Returns the underlying socket object.
+
+=item C<is_ready()>
+
+Returns true if the connection is fully established and ready for data, or
+false if the connection is in the middle of the handshake process.
 
 =item C<ip()>
 
