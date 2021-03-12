@@ -39,6 +39,11 @@ sub new {
 
   $self->{handshake} = new Protocol::WebSocket::Handshake::Server();
   $self->{disconnecting} = 0;
+  $self->{ip} = $self->{socket}->peerhost;
+  $self->{port} = $self->{socket}->peerport;
+
+  # only attempt to start SSL if this is an IO::Socket::SSL-like socket that also has not completed its SSL handshake (SSL_startHandshake => 0)
+  $self->{needs_ssl} = 1 if $self->{socket}->can("accept_SSL") && !$self->{socket}->opened;
 
   bless $self, $class;
 }
@@ -63,15 +68,9 @@ sub socket { $_[0]->{socket} }
 
 sub is_ready { !$_[0]->{handshake} }
 
-sub ip {
-  my $sock = $_[0]->{socket};
-  return $sock && $sock->connected ? $sock->peerhost : "0.0.0.0";
-}
+sub ip { $_[0]{ip} }
 
-sub port {
-  my $sock = $_[0]->{socket};
-  return $sock && $sock->connected ? $sock->peerport : 0;
-}
+sub port { $_[0]{port} }
 
 sub nodelay {
   my $self = shift;
@@ -148,6 +147,16 @@ sub send {
 
 sub recv {
   my ($self) = @_;
+
+  if ($self->{needs_ssl}) {
+    my $ssl_done = $self->{socket}->accept_SSL;
+    if ($self->{socket}->errstr) {
+      $self->disconnect;
+      return;
+    }
+    return unless $ssl_done;
+    $self->{needs_ssl} = 0;
+  }
 
   my ($len, $data) = (0, "");
   if (!($len = sysread($self->{socket}, $data, 8192))) {
@@ -315,14 +324,13 @@ false if the connection is in the middle of the handshake process.
 
 =item C<ip()>
 
-Returns the connected remote IP as a string or C<'0.0.0.0'> with no active
-connection.
+Returns the remote IP of the connection.
 
 =item C<port()>
 
-Returns the connected remote port or C<0> with no active connection. (This will
-be some high-numbered port chosen by the remote host; it can be useful during
-debugging to help humans tell apart connections from the same IP.)
+Returns the remote TCP port of the connection. (This will be some high-numbered
+port chosen by the remote host; it can be useful during debugging to help humans
+tell apart connections from the same IP.)
 
 =item C<nodelay([I<$enable>])>
 
